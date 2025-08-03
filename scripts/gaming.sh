@@ -1,171 +1,137 @@
 #!/bin/bash
 
-# Colors
+# ───────────────────────────────
+# Colors & Styling
+# ───────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+BOLD=$(tput bold)
+RESET=$(tput sgr0)
 
-# Check if running as root
-if [[ $EUID -eq 0 ]]; then
-   echo -e "${RED}This script should not be run as root${NC}"
-   exit 1
-fi
+# ───────────────────────────────
+# Utility Functions
+# ───────────────────────────────
+log()      { echo -e "${BLUE}[$(date +%T)]${NC} $1"; }
+success()  { echo -e "${GREEN}✔ $1${NC}"; }
+error()    { echo -e "${RED}✖ $1${NC}" >&2; }
+warn()     { echo -e "${YELLOW}⚠ $1${NC}"; }
+confirm()  { gum confirm --prompt "${BOLD}$1${RESET}"; }
 
-# Install figlet and gum if not present
-if ! command -v figlet &> /dev/null || ! command -v gum &> /dev/null; then
-    echo -e "${YELLOW}Installing figlet and gum...${NC}"
-    sudo pacman -S --noconfirm figlet gum
-fi
+install_packages() {
+    local label="$1"
+    shift
+    local packages=("$@")
+
+    log "Installing $label..."
+    yay -S --noconfirm "${packages[@]}" && success "$label installed"
+}
+
+install_native_packages() {
+    local label="$1"
+    shift
+    local packages=("$@")
+
+    log "Installing $label..."
+    sudo pacman -S --noconfirm "${packages[@]}" && success "$label installed"
+}
+
+# ───────────────────────────────
+# Sanity Checks
+# ───────────────────────────────
+[[ $EUID -eq 0 ]] && { error "Do not run this script as root."; exit 1; }
+
+for pkg in figlet gum; do
+    if ! command -v "$pkg" &> /dev/null; then
+        warn "$pkg not found. Installing..."
+        sudo pacman -S --noconfirm "$pkg" || { error "Failed to install $pkg"; exit 1; }
+        success "$pkg installed"
+    fi
+done
 
 clear
 figlet "Gaming Setup"
-echo -e "${BLUE}Complete gaming environment configuration${NC}"
+log "Initializing complete gaming environment setup..."
 echo
 
-# Check for yay
 if ! command -v yay &> /dev/null; then
-    echo -e "${RED}yay not found. Please run base.sh first.${NC}"
+    error "yay is not installed. Please run base.sh first."
     exit 1
 fi
 
-# Gaming platforms
-GAMING_PLATFORMS=(
-    "steam"
-    "lutris"
-    "heroic-games-launcher-bin"
-    "bottles"
-    "itch"
-    "minecraft-launcher"
-    "prismlauncher"
-)
-
-gum confirm "Install gaming platforms?" && {
-    echo -e "${GREEN}Installing gaming platforms...${NC}"
-    yay -S --noconfirm "${GAMING_PLATFORMS[@]}"
+# ───────────────────────────────
+# Gaming Components
+# ───────────────────────────────
+install_gaming_platforms() {
+    local GAMING_PLATFORMS=(steam lutris heroic-games-launcher-bin bottles itch minecraft-launcher prismlauncher)
+    confirm "Install gaming platforms (Steam, Lutris, etc.)?" && install_packages "Gaming Platforms" "${GAMING_PLATFORMS[@]}"
 }
 
-# Wine and compatibility
-WINE_PACKAGES=(
-    "wine"
-    "winetricks"
-    "wine-gecko"
-    "wine-mono"
-    "lib32-mesa"
-    "lib32-vulkan-radeon"
-    "lib32-vulkan-intel"
-    "lib32-nvidia-utils"
-)
-
-gum confirm "Install Wine and compatibility layers?" && {
-    echo -e "${GREEN}Installing Wine...${NC}"
-    sudo pacman -S --noconfirm "${WINE_PACKAGES[@]}"
+install_wine_stack() {
+    local WINE_PACKAGES=(wine winetricks wine-gecko wine-mono lib32-mesa lib32-vulkan-radeon lib32-vulkan-intel lib32-nvidia-utils)
+    confirm "Install Wine and 32-bit compatibility layers?" && install_native_packages "Wine & Compatibility Layers" "${WINE_PACKAGES[@]}"
 }
 
-# Gaming utilities
-GAMING_UTILS=(
-    "gamemode"
-    "gamescope"
-    "mangohud"
-    "lib32-mangohud"
-    "goverlay"
-    "corectrl"
-    "discord"
-    "discord-rpc"
-)
-
-gum confirm "Install gaming utilities (GameMode, MangoHUD, etc.)?" && {
-    echo -e "${GREEN}Installing gaming utilities...${NC}"
-    yay -S --noconfirm "${GAMING_UTILS[@]}"
+install_gaming_utilities() {
+    local GAMING_UTILS=(gamemode gamescope mangohud lib32-mangohud goverlay corectrl discord discord-rpc)
+    confirm "Install gaming utilities (GameMode, MangoHUD, etc.)?" && install_packages "Gaming Utilities" "${GAMING_UTILS[@]}"
 }
 
-# Detect GPU and install appropriate drivers
-GPU_VENDOR=$(lspci | grep -E "VGA|3D" | head -n1)
+install_gpu_drivers() {
+    local GPU_VENDOR
+    GPU_VENDOR=$(lspci | grep -E "VGA|3D" | head -n1)
+    echo -e "${BLUE}Detected GPU: ${GPU_VENDOR}${NC}"
 
-echo -e "${BLUE}Detected GPU: ${GPU_VENDOR}${NC}"
+    if echo "$GPU_VENDOR" | grep -iq nvidia; then
+        confirm "Install NVIDIA drivers?" && install_native_packages "NVIDIA Drivers" nvidia nvidia-utils lib32-nvidia-utils nvidia-settings
+    elif echo "$GPU_VENDOR" | grep -iq amd; then
+        confirm "Install AMD drivers?" && install_native_packages "AMD Drivers" mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon
+    elif echo "$GPU_VENDOR" | grep -iq intel; then
+        confirm "Install Intel drivers?" && install_native_packages "Intel Drivers" mesa lib32-mesa vulkan-intel lib32-vulkan-intel
+    else
+        warn "Unknown GPU. Skipping driver installation."
+    fi
+}
 
-if echo "$GPU_VENDOR" | grep -i nvidia; then
-    gum confirm "Install NVIDIA drivers?" && {
-        echo -e "${GREEN}Installing NVIDIA drivers...${NC}"
-        sudo pacman -S --noconfirm nvidia nvidia-utils lib32-nvidia-utils nvidia-settings
+install_gamedev_tools() {
+    local GAMEDEV_PACKAGES=(godot unity-editor blender krita audacity aseprite)
+    confirm "Install game development tools?" && install_packages "Game Development Tools" "${GAMEDEV_PACKAGES[@]}"
+}
+
+install_emulators() {
+    local EMULATORS=(retroarch dolphin-emu pcsx2 ppsspp desmume snes9x-gtk mupen64plus)
+    confirm "Install game emulators?" && install_packages "Emulators" "${EMULATORS[@]}"
+}
+
+install_controller_support() {
+    confirm "Install controller drivers (Xbox, PlayStation)?" && {
+        install_native_packages "Controller Support" xboxdrv xpadneo-dkms
+        install_packages "DS4 Driver" ds4drv
     }
-elif echo "$GPU_VENDOR" | grep -i amd; then
-    gum confirm "Install AMD drivers?" && {
-        echo -e "${GREEN}Installing AMD drivers...${NC}"
-        sudo pacman -S --noconfirm mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon
+}
+
+enable_multilib_repo() {
+    confirm "Enable multilib repository for 32-bit game support?" && {
+        sudo sed -i '/\[multilib\]/,/Include/s/^#//' /etc/pacman.conf
+        sudo pacman -Sy && success "Multilib repo enabled"
     }
-elif echo "$GPU_VENDOR" | grep -i intel; then
-    gum confirm "Install Intel drivers?" && {
-        echo -e "${GREEN}Installing Intel drivers...${NC}"
-        sudo pacman -S --noconfirm mesa lib32-mesa vulkan-intel lib32-vulkan-intel
+}
+
+configure_steam() {
+    confirm "Configure Steam for optimal performance?" && {
+        mkdir -p ~/.steam/steam/config
+        log "Reminder:"
+        echo -e "  ${YELLOW}• Enable Steam Play (Proton) for all titles${NC}"
+        echo -e "  ${YELLOW}• Use 'gamemoderun %command%' in game launch options${NC}"
     }
-fi
-
-# Game development tools
-GAMEDEV_PACKAGES=(
-    "godot"
-    "unity-editor"
-    "blender"
-    "krita"
-    "audacity"
-    "aseprite"
-)
-
-gum confirm "Install game development tools?" && {
-    echo -e "${GREEN}Installing game development tools...${NC}"
-    yay -S --noconfirm "${GAMEDEV_PACKAGES[@]}"
 }
 
-# Emulators
-EMULATORS=(
-    "retroarch"
-    "dolphin-emu"
-    "pcsx2"
-    "ppsspp"
-    "desmume"
-    "snes9x-gtk"
-    "mupen64plus"
-)
-
-gum confirm "Install emulators?" && {
-    echo -e "${GREEN}Installing emulators...${NC}"
-    yay -S --noconfirm "${EMULATORS[@]}"
-}
-
-# Gaming controllers support
-gum confirm "Install gaming controller support?" && {
-    echo -e "${GREEN}Installing controller support...${NC}"
-    sudo pacman -S --noconfirm xboxdrv xpadneo-dkms
-    yay -S --noconfirm ds4drv
-}
-
-# Enable multilib repository (for 32-bit support)
-gum confirm "Enable multilib repository for 32-bit game support?" && {
-    echo -e "${GREEN}Enabling multilib repository...${NC}"
-    sudo sed -i '/\[multilib\]/,/Include/s/^#//' /etc/pacman.conf
-    sudo pacman -Sy
-}
-
-# Configure Steam for optimal performance
-gum confirm "Configure Steam for optimal performance?" && {
-    echo -e "${GREEN}Configuring Steam...${NC}"
-
-    # Create Steam launch options directory
-    mkdir -p ~/.steam/steam/config
-
-    # Add gamemode to Steam games by default
-    echo -e "${YELLOW}Add 'gamemoderun %command%' to your Steam game launch options for better performance${NC}"
-
-    # Enable Steam Play for all titles
-    echo -e "${YELLOW}Enable Steam Play (Proton) for all titles in Steam Settings > Steam Play${NC}"
-}
-
-# Configure MangoHUD
-gum confirm "Configure MangoHUD for performance monitoring?" && {
-    echo -e "${GREEN}Configuring MangoHUD...${NC}"
-    mkdir -p ~/.config/MangoHud
-    cat > ~/.config/MangoHud/MangoHud.conf << 'EOF'
+configure_mangohud() {
+    confirm "Configure MangoHUD for FPS/performance overlay?" && {
+        mkdir -p ~/.config/MangoHud
+        cat > ~/.config/MangoHud/MangoHud.conf << 'EOF'
 fps
 frametime
 cpu_temp
@@ -178,18 +144,15 @@ position=top-left
 background_alpha=0.4
 font_size=16
 EOF
+        success "MangoHUD configuration applied"
+    }
 }
 
-# Gaming-specific optimizations
-gum confirm "Apply gaming optimizations?" && {
-    echo -e "${GREEN}Applying gaming optimizations...${NC}"
-
-    # Add user to gamemode group
-    sudo usermod -aG gamemode $USER
-
-    # Configure GameMode
-    sudo mkdir -p /etc/gamemode
-    sudo tee /etc/gamemode/gamemode.ini > /dev/null << 'EOF'
+apply_gaming_optimizations() {
+    confirm "Apply GameMode and performance tweaks?" && {
+        sudo usermod -aG gamemode $USER
+        sudo mkdir -p /etc/gamemode
+        sudo tee /etc/gamemode/gamemode.ini > /dev/null << 'EOF'
 [general]
 renice=10
 desiredgov=performance
@@ -202,13 +165,33 @@ apply_gpu_optimisations=accept-responsibility
 start=notify-send "GameMode started"
 end=notify-send "GameMode ended"
 EOF
+        success "GameMode configuration applied"
+    }
 }
 
+# ───────────────────────────────
+# Execution
+# ───────────────────────────────
+install_gaming_platforms
+install_wine_stack
+install_gaming_utilities
+install_gpu_drivers
+install_gamedev_tools
+install_emulators
+install_controller_support
+enable_multilib_repo
+configure_steam
+configure_mangohud
+apply_gaming_optimizations
+
+# ───────────────────────────────
+# Final Message
+# ───────────────────────────────
 echo
 figlet "Game On!"
-echo -e "${GREEN}Gaming setup completed successfully!${NC}"
-echo -e "${YELLOW}Recommended: Reboot to ensure all drivers are loaded properly${NC}"
-echo -e "${BLUE}Don't forget to:${NC}"
-echo -e "  • Enable Steam Play in Steam settings"
-echo -e "  • Add 'gamemoderun %command%' to game launch options"
-echo -e "  • Configure GPU-specific settings in your GPU control panel"
+success "Gaming setup completed successfully!"
+warn "Reboot is recommended to apply all driver and group changes."
+echo -e "${BLUE}Post-Setup Checklist:${NC}"
+echo -e "  • ✅ Enable Steam Play in Steam Settings"
+echo -e "  • ✅ Use 'gamemoderun %command%' in game launch options"
+echo -e "  • ✅ Configure your GPU via control panel if needed"

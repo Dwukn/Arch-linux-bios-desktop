@@ -1,115 +1,123 @@
 #!/bin/bash
 
-# Colors
+# ───────────────────────────────────────────────
+# Color & Output Styling
+# ───────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
+BOLD=$(tput bold)
+RESET=$(tput sgr0)
 
-# Check if running as root
-if [[ $EUID -eq 0 ]]; then
-   echo -e "${RED}This script should not be run as root${NC}"
-   exit 1
-fi
+# ───────────────────────────────────────────────
+# Logging Functions
+# ───────────────────────────────────────────────
+log()     { echo -e "${BLUE}[$(date +%T)]${NC} $1"; }
+success() { echo -e "${GREEN}✔ $1${NC}"; }
+error()   { echo -e "${RED}✖ $1${NC}" >&2; }
+warn()    { echo -e "${YELLOW}⚠ $1${NC}"; }
+confirm() { gum confirm --prompt "${BOLD}$1${RESET}"; }
 
-# Install figlet and gum if not present
-if ! command -v figlet &> /dev/null || ! command -v gum &> /dev/null; then
-    echo -e "${YELLOW}Installing figlet and gum...${NC}"
-    sudo pacman -S --noconfirm figlet gum
-fi
+# ───────────────────────────────────────────────
+# Root Check
+# ───────────────────────────────────────────────
+[[ $EUID -eq 0 ]] && { error "This script should not be run as root."; exit 1; }
+
+# ───────────────────────────────────────────────
+# Dependency Check: figlet & gum
+# ───────────────────────────────────────────────
+for pkg in figlet gum; do
+    if ! command -v "$pkg" &>/dev/null; then
+        log "Installing missing package: $pkg"
+        sudo pacman -S --noconfirm "$pkg"
+    fi
+done
 
 clear
 figlet "Arch Base Setup"
-echo -e "${BLUE}Essential system configuration and tweaks${NC}"
-echo
+log "Starting essential Arch Linux system configuration..."
 
-# Update system
-gum confirm "Update system packages?" && {
-    echo -e "${GREEN}Updating system...${NC}"
-    sudo pacman -Syu --noconfirm
-}
+# ───────────────────────────────────────────────
+# Functions
+# ───────────────────────────────────────────────
 
-# Ask for AUR helper of choice and install it
-if ! command -v yay &> /dev/null && ! command -v paru &> /dev/null; then
-    AUR_HELPER=$(gum choose "yay" "paru" --header="Select AUR helper to install:")
-    if [[ "$AUR_HELPER" == "yay" || "$AUR_HELPER" == "paru" ]]; then
-        gum confirm "Install $AUR_HELPER AUR helper?" && {
-            echo -e "${GREEN}Installing $AUR_HELPER...${NC}"
-            git clone "https://aur.archlinux.org/$AUR_HELPER.git" /tmp/$AUR_HELPER
-            cd /tmp/$AUR_HELPER
-            makepkg -si --noconfirm
-            cd -
-            rm -rf /tmp/$AUR_HELPER
+choose_aur_helper() {
+    if ! command -v yay &>/dev/null && ! command -v paru &>/dev/null; then
+        AUR_HELPER=$(gum choose yay paru --header="Select AUR helper to install:")
+        confirm "Install AUR helper: $AUR_HELPER?" && {
+            log "Installing $AUR_HELPER..."
+            git clone https://aur.archlinux.org/$AUR_HELPER.git /tmp/$AUR_HELPER &&
+            cd /tmp/$AUR_HELPER &&
+            makepkg -si --noconfirm &&
+            cd - && rm -rf /tmp/$AUR_HELPER &&
+            success "$AUR_HELPER installed"
         }
     else
-        echo -e "${YELLOW}No valid AUR helper selected. Skipping...${NC}"
-    fi
-fi
-
-
-# Essential packages
-ESSENTIAL_PACKAGES=(
-    "base-devel"
-    "git"
-    "wget"
-    "curl"
-    "unzip"
-    "htop"
-    "fastfetch"
-    "tree"
-    "vim"
-    "nano"
-    "bash-completion"
-    "man-db"
-    "man-pages"
-    "reflector"
-    "networkmanager"
-    "openssh"
-)
-
-gum confirm "Install essential packages?" && {
-    echo -e "${GREEN}Installing essential packages...${NC}"
-    sudo pacman -S --noconfirm "${ESSENTIAL_PACKAGES[@]}"
-}
-
-# Configure reflector for faster mirrors
-gum confirm "Configure reflector for faster mirrors?" && {
-    echo -e "${GREEN}Configuring reflector...${NC}"
-    UserCountry=$(gum input --placeholder "Enter your country (e.g. United States)")
-    if [[ -n "$UserCountry" ]]; then
-        sudo reflector --country "$UserCountry" --age 6 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
-        echo -e "${GREEN}Mirrorlist updated for $UserCountry${NC}"
-    else
-        echo -e "${RED}No country provided. Skipping reflector configuration.${NC}"
+        success "AUR helper already present"
     fi
 }
 
-
-# Enable services
-gum confirm "Enable NetworkManager and SSH?" && {
-    echo -e "${GREEN}Enabling services...${NC}"
-    sudo systemctl enable NetworkManager
-    sudo systemctl enable sshd
-}
-
-# Configure Git (if not already configured)
-if ! git config --global user.name &> /dev/null; then
-    gum confirm "Configure Git?" && {
-        NAME=$(gum input --placeholder "Enter your full name")
-        EMAIL=$(gum input --placeholder "Enter your email")
-        git config --global user.name "$NAME"
-        git config --global user.email "$EMAIL"
-        echo -e "${GREEN}Git configured successfully${NC}"
+configure_reflector() {
+    confirm "Configure reflector for fast mirrors?" && {
+        local country=$(gum input --placeholder "Enter your country (e.g. United States)")
+        if [[ -n "$country" ]]; then
+            log "Optimizing mirrors for $country"
+            sudo reflector --country "$country" --age 6 --protocol https --sort rate --save /etc/pacman.d/mirrorlist &&
+            success "Reflector configured"
+        else
+            warn "No country provided. Skipping reflector."
+        fi
     }
-fi
+}
 
-# Add aliases to .bashrc
-gum confirm "Add useful aliases to .bashrc?" && {
-    echo -e "${GREEN}Adding aliases...${NC}"
-    cat >> ~/.bashrc << 'EOF'
+install_essential_packages() {
+    ESSENTIALS=(
+        base-devel git wget curl unzip htop fastfetch tree vim nano
+        bash-completion man-db man-pages reflector networkmanager openssh
+    )
+    confirm "Install essential packages?" && {
+        printf "%s\n" "${ESSENTIALS[@]}"
+        confirm "Proceed with above list?" &&
+        sudo pacman -S --noconfirm "${ESSENTIALS[@]}" &&
+        success "Essential packages installed"
+    }
+}
 
-# Custom aliases
+install_additional_packages() {
+    confirm "Install additional packages?" && {
+        local extra=$(gum input --placeholder "e.g. neofetch zsh flatpak")
+        [[ -n "$extra" ]] && sudo pacman -S --noconfirm $extra && success "Additional packages installed"
+    }
+}
+
+enable_services() {
+    confirm "Enable NetworkManager and SSH?" && {
+        sudo systemctl enable NetworkManager sshd &&
+        success "Services enabled"
+    }
+}
+
+configure_git() {
+    confirm "Configure global Git username & email?" && {
+        local name=$(gum input --placeholder "Git username")
+        local email=$(gum input --placeholder "Git email")
+        if [[ -n "$name" && -n "$email" ]]; then
+            git config --global user.name "$name"
+            git config --global user.email "$email"
+            success "Git configured"
+        else
+            warn "Git name or email not provided. Skipping."
+        fi
+    }
+}
+
+add_aliases() {
+    confirm "Add useful aliases to .bashrc?" && {
+        ALIAS_BLOCK=$(cat << 'EOF'
+
+# ───── Custom Aliases ─────
 alias ll='ls -alF'
 alias la='ls -A'
 alias l='ls -CF'
@@ -124,12 +132,19 @@ alias search='pacman -Ss'
 alias remove='sudo pacman -R'
 alias autoremove='sudo pacman -Rns $(pacman -Qtdq)'
 EOF
+)
+        if ! grep -q "Custom Aliases" ~/.bashrc; then
+            echo "$ALIAS_BLOCK" >> ~/.bashrc
+            success "Aliases added"
+        else
+            warn "Aliases already exist in .bashrc"
+        fi
+    }
 }
 
-# Configure vim
-gum confirm "Create basic vim configuration?" && {
-    echo -e "${GREEN}Configuring vim...${NC}"
-    cat > ~/.vimrc << 'EOF'
+configure_vim() {
+    confirm "Create basic vimrc config?" && {
+        cat > ~/.vimrc << 'EOF'
 set number
 set relativenumber
 set autoindent
@@ -142,9 +157,33 @@ set incsearch
 syntax on
 set background=dark
 EOF
+        success ".vimrc configured"
+    }
 }
 
+update_system() {
+    confirm "Update system packages?" && {
+        sudo pacman -Syu --noconfirm && success "System updated"
+    }
+}
+
+# ───────────────────────────────────────────────
+# Main Execution
+# ───────────────────────────────────────────────
+update_system
+choose_aur_helper
+install_essential_packages
+install_additional_packages
+configure_reflector
+enable_services
+configure_git
+add_aliases
+configure_vim
+
+# ───────────────────────────────────────────────
+# Summary
+# ───────────────────────────────────────────────
 echo
 figlet "Complete!"
-echo -e "${GREEN}Base setup completed successfully!${NC}"
-echo -e "${YELLOW}Don't forget to reboot if kernel was updated${NC}"
+success "Base setup finished!"
+warn "Reboot recommended if kernel or major packages were updated."
