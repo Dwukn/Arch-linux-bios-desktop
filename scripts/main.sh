@@ -18,8 +18,16 @@ fi
 # ───── Install Requirements ─────
 for pkg in figlet gum; do
     if ! command -v "$pkg" &>/dev/null; then
-        echo -e "${YELLOW}Installing missing package: $pkg${NC}"
-        sudo pacman -S --noconfirm "$pkg"
+        echo -e "${YELLOW}Missing package: ${pkg}${NC}"
+        read -p "Do you want to install ${pkg}? [Y/n]: " choice
+        choice=${choice:-Y}
+        if [[ "$choice" =~ ^[Yy]$ ]]; then
+            echo -e "${GREEN}Installing ${pkg}...${NC}"
+            sudo pacman -S --noconfirm "$pkg"
+        else
+            echo -e "${RED}${pkg} is required. Exiting.${NC}"
+            exit 1
+        fi
     fi
 done
 
@@ -84,29 +92,7 @@ while true; do
             echo -e "${GREEN}✅ Complete setup finished!${NC}"
             ;;
         *"Script Information"*)
-            clear
-            figlet "Script Info"
-            echo -e "${BLUE}📦 Arch Linux Post-Install Toolkit${NC}"
-            echo
-            echo -e "${GREEN}Included Scripts:${NC}"
-            printf "  ${YELLOW}%-15s${NC} - %s\n" \
-                "base.sh"     "Essential system tweaks and tools" \
-                "dev.sh"      "Programming languages and IDEs" \
-                "general.sh"  "Daily desktop apps and UI tools" \
-                "gaming.sh"   "Steam, Wine, emulators, tweaks" \
-                "vm.sh"       "KVM/QEMU, VirtualBox, Docker setup"
-            echo
-            echo -e "${GREEN}How to Use:${NC}"
-            echo -e "  ${CYAN}git clone <your-repo-url>${NC}"
-            echo -e "  ${CYAN}cd arch-post-install && chmod +x *.sh${NC}"
-            echo -e "  ${CYAN}./setup.sh${NC} to begin"
-            echo
-            echo -e "${GREEN}Features:${NC}"
-            echo -e "  • Interactive selection with gum"
-            echo -e "  • Color-coded logs and clean headers"
-            echo -e "  • Automatic script chaining for full setup"
-            echo
-            gum confirm "Return to menu?" && continue
+        run_script "info.sh"
             ;;
         *"Exit"*)
             echo -e "${GREEN}Thanks for using Arch Setup! 👋${NC}"
